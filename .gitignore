@@ -1,0 +1,58 @@
+# --- Project-private ---
+plan.txt
+data/
+models/
+*.onnx
+*.bin
+*.safetensors
+
+# --- Env & secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+.aws/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# --- Virtualenvs ---
+.venv/
+venv/
+env/
+
+# --- uv ---
+# Keep pyproject.toml and uv.lock committed.
+# .python-version is also committed (pins the project's Python version).
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# --- VSCode / JetBrains ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Locust / benchmark artifacts ---
+locust_results/
+*.html
+!docs/*.html
