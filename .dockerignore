@@ -1,0 +1,57 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Virtualenvs (host-side)
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Project-private and downloaded artifacts
+data/
+models/
+*.onnx
+*.safetensors
+plan.txt
+
+# Secrets
+.env
+.env.*
+*.pem
+
+# Tests and scripts (not part of the runtime image)
+tests/
+scripts/
+
+# Docs and meta (README.md is required by hatchling at build time per
+# pyproject.toml `readme = "README.md"`; keep it in the build context).
+docs/
+CHANGELOG.md
+.pre-commit-config.yaml
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# uv host-side bits
+.python-version
+
+# Don't ignore the Dockerfile itself or the project manifest
+!Dockerfile
+!pyproject.toml
+!uv.lock
