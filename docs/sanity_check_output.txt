@@ -1,0 +1,32 @@
+Model: unitary/toxic-bert
+Labels: ['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+
+INPUT: I love this, what a wonderful project!
+  {"toxic": 0.0006, "severe_toxic": 0.0001, "obscene": 0.0002, "threat": 0.0001, "insult": 0.0002, "identity_hate": 0.0001}
+
+INPUT: Thanks so much for your help.
+  {"toxic": 0.0006, "severe_toxic": 0.0001, "obscene": 0.0002, "threat": 0.0001, "insult": 0.0002, "identity_hate": 0.0001}
+
+INPUT: She is a brilliant engineer.
+  {"toxic": 0.0008, "severe_toxic": 0.0001, "obscene": 0.0002, "threat": 0.0001, "insult": 0.0002, "identity_hate": 0.0001}
+
+INPUT: I disagree with your opinion, but I respect it.
+  {"toxic": 0.0006, "severe_toxic": 0.0001, "obscene": 0.0002, "threat": 0.0001, "insult": 0.0002, "identity_hate": 0.0002}
+
+INPUT: Have a wonderful day!
+  {"toxic": 0.0012, "severe_toxic": 0.0001, "obscene": 0.0002, "threat": 0.0001, "insult": 0.0002, "identity_hate": 0.0002}
+
+INPUT: You are an idiot.
+  {"toxic": 0.9878, "severe_toxic": 0.0425, "obscene": 0.7727, "threat": 0.0013, "insult": 0.9573, "identity_hate": 0.0133}
+
+INPUT: This is the worst garbage I have ever seen.
+  {"toxic": 0.9428, "severe_toxic": 0.0041, "obscene": 0.1927, "threat": 0.0019, "insult": 0.0692, "identity_hate": 0.0032}
+
+INPUT: Shut up, you moron.
+  {"toxic": 0.9923, "severe_toxic": 0.0507, "obscene": 0.8191, "threat": 0.0016, "insult": 0.9468, "identity_hate": 0.0147}
+
+INPUT: Go back to where you came from.
+  {"toxic": 0.021, "severe_toxic": 0.0001, "obscene": 0.0006, "threat": 0.0004, "insult": 0.0007, "identity_hate": 0.0003}
+
+INPUT: I am going to make you regret this.
+  {"toxic": 0.0648, "severe_toxic": 0.0005, "obscene": 0.0013, "threat": 0.0074, "insult": 0.0011, "identity_hate": 0.0012}
