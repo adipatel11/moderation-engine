@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from ._logging import configure_logging
 from .config import settings
-from .model import ToxicityClassifier
+from .model import build_classifier
 
 configure_logging(settings.log_level)
 log = structlog.get_logger()
@@ -33,9 +33,15 @@ class HealthResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    log.info("model_load_start", model_name=settings.model_name)
-    app.state.classifier = ToxicityClassifier(settings.model_name)
-    log.info("model_load_done", labels=app.state.classifier.labels)
+    log.info("model_load_start", backend=settings.backend, model_name=settings.model_name)
+    classifier = build_classifier(settings)
+    app.state.classifier = classifier
+    log.info(
+        "model_load_done",
+        backend=classifier.backend_name,
+        model_version=classifier.model_version,
+        labels=classifier.labels,
+    )
     yield
     log.info("shutdown")
 
@@ -62,4 +68,4 @@ def classify(payload: ClassifyRequest, request: Request) -> ClassifyResponse:
     latency_ms = (time.perf_counter() - started) * 1000
     top_label = max(labels.items(), key=lambda kv: kv[1])[0]
     bound.info("classify", latency_ms=round(latency_ms, 2), top_label=top_label)
-    return ClassifyResponse(labels=labels, model_version=settings.model_name)
+    return ClassifyResponse(labels=labels, model_version=request.app.state.classifier.model_version)
