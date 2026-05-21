@@ -158,6 +158,62 @@ the service stays up under stress. **Conclusion**: keep ONNX as the
 new baseline; the p99 regression is a known trade-off that the next
 two opts directly address.
 
+### INT8 latency / throughput (Phase 2, Opt 2)
+
+Same locked protocol against the INT8-backed container (`phase2-int8`
+tag, `BACKEND=onnx`, CPUExecutionProvider, `ONNX_MODEL_DIR=/opt/onnx-toxic-bert-int8`).
+Identical EC2 host, identical 1000-row seed-42 sample, identical sweep
+levels. Opt 1 locust CSVs archived under `docs/locust/phase2-onnx/`.
+
+| Users | Requests | Failures | p50 (ms) | p95 (ms) | p99 (ms) | Throughput (req/s) | Error rate | Notes |
+|------:|---------:|---------:|---------:|---------:|---------:|-------------------:|-----------:|-------|
+|     1 |      714 |        0 |       60 |      170 |      430 |               12.3 |      0.00% | Single-request floor |
+|     5 |    1,322 |        0 |      140 |      610 |    1,300 |               22.7 |      0.00% | Throughput ceiling |
+|    10 |    1,344 |        0 |      260 |    1,300 |    3,100 |               22.7 |      0.00% | Saturated |
+|    25 |    1,395 |        0 |      640 |    3,100 |    7,000 |               23.6 |      0.00% | Queue-bound |
+|    50 |    1,334 |        0 |    1,500 |    5,400 |   13,000 |               23.1 |      0.00% | Queue-bound |
+|   100 |    1,319 |        0 |    3,700 |    7,600 |   13,000 |               22.4 |      0.00% | Queue-bound |
+
+Compared to the ONNX FP32 stage (same hardware, same sample, same
+protocol):
+
+| Users | p50 Δ                   | p95 Δ                   | p99 Δ                    | Throughput Δ              |
+|------:|------------------------:|------------------------:|-------------------------:|--------------------------:|
+|     1 | **−50%** (120→60)       | **−67%** (510→170)      | **−54%** (930→430)       | **+120%** (5.6→12.3)      |
+|     5 | **−62%** (370→140)      | **−59%** (1,500→610)    | **−48%** (2,500→1,300)   | **+158%** (8.8→22.7)      |
+|    10 | **−65%** (750→260)      | **−67%** (3,900→1,300)  | **−58%** (7,300→3,100)   | **+180%** (8.1→22.7)      |
+|    25 | **−66%** (1,900→640)    | **−61%** (8,000→3,100)  | **−63%** (19,000→7,000)  | **+181%** (8.4→23.6)      |
+|    50 | **−64%** (4,200→1,500)  | **−55%** (12,000→5,400) | **−43%** (23,000→13,000) | **+165%** (8.7→23.1)      |
+|   100 | **−66%** (11,000→3,700) | **−62%** (20,000→7,600) | **−57%** (30,000→13,000) | **+191%** (7.7→22.4)      |
+
+**What changed**: same ONNX graph, but the matmul ops now consume
+INT8-quantized weights via `MatMulInteger` instead of fp32 matmul. No
+code or graph topology change — just `onnxruntime.quantization.quantize_dynamic`
+(`QInt8`) producing a 105 MB model.onnx that drops into the same
+runtime. Container shrinks from 521 MB → 173 MB compressed in ECR
+(−67%).
+
+**What surprised**: every column, every level, the win is bigger than
+the plan's "2-3x latency reduction" expectation — p50 is **−50 to −66%**
+across the entire concurrency curve, p99 is **−43 to −63%**, throughput
+is **+120 to +191%**. And the p99 regression that ONNX FP32 introduced
+at concurrency is *gone* — at 25 users, ONNX FP32 had p99 +90% vs the
+PyTorch baseline; INT8 turns that into p99 −30% vs baseline at the
+same level. The mechanism: ONNX's intra-op threading still gives a
+single request access to both cores, but each request now finishes
+~3x faster, so each pair of in-flight requests spends much less time
+in contention. Threading didn't get fixed — the cost of contention
+just got cheaper. The throughput ceiling moved from ~9 req/s to ~23
+req/s (still a single-process saturation, still ahead of Opt 3 dynamic
+batching to lift further), and the curve flattens after the ceiling
+rather than continuing to deteriorate.
+
+Zero failures across all 6 levels. The Phase 1 prediction held: ONNX
+moves the floor down, INT8 moves it down again. **Conclusion**: INT8
+is a strict Pareto win on every recorded metric — F1 up, p50 down,
+p95 down, p99 down, throughput up, container size down. The plan's
+"discard if F1 drops too far" branch does not trigger.
+
 ## Optimization journey
 
 _Populated through Phase 2. Each row gets a one-paragraph "what changed / what surprised" beneath the table._
@@ -166,6 +222,6 @@ _Populated through Phase 2. Each row gets a one-paragraph "what changed / what s
 |-------|---------:|-------------------:|---------:|-------|
 | Baseline (PyTorch CPU)      | 860 (1u) / 4,800 (10u)  | ~7   | 0.6101 (macro) | Single-request floor 860 ms p99; throughput saturates at ~7 req/s |
 | + ONNX Runtime              | 930 (1u) / 7,300 (10u)  | ~8-9 | 0.6101 (macro) | Single-request p50 −25%, throughput +30%; p99 widens at concurrency (intra-op threading) |
-| + INT8 dynamic quantization | _TBD_ | _TBD_ | _TBD_ | — |
+| + INT8 dynamic quantization | 430 (1u) / 3,100 (10u)  | ~22-23 | 0.6146 (macro) | p99 −54% at 1u, −58% at 10u; throughput +180%; macro-F1 +0.0045 (5/6 labels improve); container 521→173 MB |
 | + Dynamic batching (5 ms)   | _TBD_ | _TBD_ | _TBD_ | — |
 | + Opt 4 (TBD)               | _TBD_ | _TBD_ | _TBD_ | — |
