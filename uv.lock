@@ -818,58 +818,58 @@ name = "moderation-engine"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "datasets" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "onnxruntime" },
-    { name = "optimum", extra = ["onnxruntime"] },
-    { name = "pandas" },
     { name = "prometheus-client" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "scikit-learn" },
     { name = "structlog" },
-    { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
-    { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
     { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "datasets" },
     { name = "kaggle" },
     { name = "locust" },
+    { name = "optimum", extra = ["onnxruntime"] },
+    { name = "pandas" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "scikit-learn" },
+    { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
+    { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "datasets", specifier = ">=2.18" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "onnxruntime", specifier = ">=1.17" },
-    { name = "optimum", extras = ["exporters", "onnxruntime"], specifier = ">=1.20" },
-    { name = "pandas", specifier = ">=2.2" },
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pydantic-settings", specifier = ">=2.2" },
-    { name = "scikit-learn", specifier = ">=1.4" },
     { name = "structlog", specifier = ">=24.1" },
-    { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.2" },
-    { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.2", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", specifier = ">=4.40" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "datasets", specifier = ">=2.18" },
     { name = "kaggle", specifier = ">=2.1.2" },
     { name = "locust", specifier = ">=2.44.0" },
+    { name = "optimum", extras = ["exporters", "onnxruntime"], specifier = ">=1.20" },
+    { name = "pandas", specifier = ">=2.2" },
     { name = "pre-commit", specifier = ">=4.6.0" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "ruff", specifier = ">=0.15.13" },
+    { name = "scikit-learn", specifier = ">=1.4" },
+    { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.2" },
+    { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.2", index = "https://download.pytorch.org/whl/cpu" },
 ]
 
 [[package]]

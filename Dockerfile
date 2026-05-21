@@ -27,11 +27,12 @@ COPY moderation_engine ./moderation_engine
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-# Pre-download toxic-bert into HF_HOME so the runtime image starts offline.
-RUN /opt/venv/bin/python -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
-    name='unitary/toxic-bert'; \
-    AutoTokenizer.from_pretrained(name); \
-    AutoModelForSequenceClassification.from_pretrained(name)"
+# Bake the optimized ONNX export into the image (used by BACKEND=onnx,
+# the only backend supported in this image). Built locally via
+# `uv run python scripts/export_onnx.py`. The export dir bundles the
+# tokenizer files alongside model.onnx so the runtime needs neither
+# the HF cache nor network access.
+COPY models/onnx-toxic-bert /opt/onnx-toxic-bert
 
 # --- runtime ---------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
@@ -39,16 +40,17 @@ FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HF_HOME=/opt/hf-cache \
     TRANSFORMERS_OFFLINE=1 \
-    HF_HUB_OFFLINE=1
+    HF_HUB_OFFLINE=1 \
+    BACKEND=onnx \
+    ONNX_MODEL_DIR=/opt/onnx-toxic-bert
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 app
 USER app
 WORKDIR /home/app
 
 COPY --from=builder --chown=app:app /opt/venv /opt/venv
-COPY --from=builder --chown=app:app /opt/hf-cache /opt/hf-cache
+COPY --from=builder --chown=app:app /opt/onnx-toxic-bert /opt/onnx-toxic-bert
 COPY --from=builder --chown=app:app /app/moderation_engine ./moderation_engine
 
 EXPOSE 8000
