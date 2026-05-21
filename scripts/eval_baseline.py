@@ -74,37 +74,59 @@ def predict_pytorch(
     return out, labels, f"{MODEL_NAME}@pytorch"
 
 
-def predict_onnx(texts: list[str], batch_size: int) -> tuple[list[list[float]], list[str], str]:
+def predict_onnx(
+    texts: list[str], batch_size: int, onnx_dir: Path, version_tag: str
+) -> tuple[list[list[float]], list[str], str]:
     import onnxruntime as ort
 
-    if not (ONNX_DIR / "model.onnx").exists():
+    if not (onnx_dir / "model.onnx").exists():
         raise FileNotFoundError(
-            f"missing {ONNX_DIR / 'model.onnx'}. Run scripts/export_onnx.py first."
+            f"missing {onnx_dir / 'model.onnx'}. Run scripts/export_onnx.py first."
         )
 
-    config = json.loads((ONNX_DIR / "config.json").read_text())
+    config = json.loads((onnx_dir / "config.json").read_text())
     id2label = config["id2label"]
     labels = [id2label[str(i)] for i in range(len(id2label))]
-    tokenizer = AutoTokenizer.from_pretrained(str(ONNX_DIR))
+    tokenizer = AutoTokenizer.from_pretrained(str(onnx_dir))
 
     sess_opts = ort.SessionOptions()
     sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     session = ort.InferenceSession(
-        str(ONNX_DIR / "model.onnx"),
+        str(onnx_dir / "model.onnx"),
         sess_options=sess_opts,
         providers=["CPUExecutionProvider"],
     )
     input_names = {i.name for i in session.get_inputs()}
 
-    out: list[list[float]] = []
-    for start in tqdm(range(0, len(texts), batch_size), desc="batches", unit="batch"):
-        batch = texts[start : start + batch_size]
+    # Sort by tokenized length so batches share similar seq_len — most batches
+    # become short and fast; only a few outlier batches near the end pad to 512.
+    print("Pre-tokenizing to get sequence lengths…")
+    lengths = np.fromiter(
+        (
+            len(ids)
+            for ids in tokenizer(texts, truncation=True, max_length=512, add_special_tokens=True)[
+                "input_ids"
+            ]
+        ),
+        dtype=np.int32,
+        count=len(texts),
+    )
+    sort_idx = np.argsort(lengths, kind="stable")
+    unsort_idx = np.argsort(sort_idx, kind="stable")
+    sorted_texts = [texts[i] for i in sort_idx]
+    print(f"  seq_len: min={lengths.min()} median={int(np.median(lengths))} max={lengths.max()}")
+
+    sorted_out: list[list[float]] = []
+    for start in tqdm(range(0, len(sorted_texts), batch_size), desc="batches", unit="batch"):
+        batch = sorted_texts[start : start + batch_size]
         enc = tokenizer(batch, return_tensors="np", padding=True, truncation=True, max_length=512)
         feed = {name: enc[name] for name in input_names if name in enc}
         logits = session.run(None, feed)[0]
         probs = 1.0 / (1.0 + np.exp(-logits))
-        out.extend(probs.tolist())
-    return out, labels, f"{MODEL_NAME}@onnx"
+        sorted_out.extend(probs.tolist())
+
+    out: list[list[float]] = [sorted_out[unsort_idx[i]] for i in range(len(texts))]
+    return out, labels, f"{MODEL_NAME}@{version_tag}"
 
 
 def compute_metrics(y_true: pd.DataFrame, probs: pd.DataFrame) -> list[dict[str, float]]:
@@ -141,11 +163,21 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "mps", "cuda"])
     parser.add_argument("--limit", type=int, default=None, help="Eval only first N rows (dry-run)")
+    parser.add_argument(
+        "--onnx-dir",
+        default=str(ONNX_DIR),
+        help="ONNX model directory (use models/onnx-toxic-bert-int8 for INT8 eval)",
+    )
+    parser.add_argument(
+        "--out-prefix",
+        default=None,
+        help="Output filename prefix (default: 'baseline' for pytorch, backend name otherwise)",
+    )
     args = parser.parse_args()
 
     # PyTorch baseline keeps the legacy `baseline_*` filenames so existing
     # references in docs/benchmarks.md keep working.
-    out_prefix = "baseline" if args.backend == "pytorch" else args.backend
+    out_prefix = args.out_prefix or ("baseline" if args.backend == "pytorch" else args.backend)
     out_table = ROOT / "docs" / f"{out_prefix}_accuracy.md"
     out_preds = ROOT / "docs" / f"{out_prefix}_predictions.parquet"
 
@@ -166,7 +198,13 @@ def main() -> None:
         raw_probs, model_labels, model_version = predict_pytorch(texts, device, args.batch_size)
         device_str = str(device)
     else:
-        raw_probs, model_labels, model_version = predict_onnx(texts, args.batch_size)
+        onnx_dir = Path(args.onnx_dir)
+        if not onnx_dir.is_absolute():
+            onnx_dir = ROOT / onnx_dir
+        version_tag = "onnx-int8" if "int8" in onnx_dir.name else "onnx"
+        raw_probs, model_labels, model_version = predict_onnx(
+            texts, args.batch_size, onnx_dir, version_tag
+        )
         device_str = "onnxruntime/CPUExecutionProvider"
     elapsed = time.perf_counter() - t0
 
