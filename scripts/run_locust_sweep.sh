@@ -21,7 +21,13 @@ cd "$(dirname "$0")/.."
 mkdir -p docs/locust
 
 # Quick reachability check before burning a 6-level sweep.
-if ! curl --fail --silent --show-error --max-time 5 "${TARGET}/health" >/dev/null; then
+# Use python (not curl) so the same script runs under restrictive harnesses.
+if ! python3 -c "
+import json, sys, urllib.request
+with urllib.request.urlopen('${TARGET}/health', timeout=5) as r:
+    body = json.loads(r.read())
+sys.exit(0 if body.get('status') == 'ok' and body.get('model_loaded') else 1)
+" >/dev/null 2>&1; then
   echo "FATAL: ${TARGET}/health did not respond OK" >&2
   exit 3
 fi
