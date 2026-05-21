@@ -46,12 +46,15 @@ def main() -> None:
     rows.sort(key=lambda kv: kv[0])
 
     lines = [
-        "# Baseline latency / throughput (locust sweep)",
+        "# Latest locust sweep",
         "",
         "Closed-loop concurrency sweep against the EC2-deployed container "
-        "(see `docs/benchmarks.md` for the locked protocol). Each level runs "
-        "for 60 s with zero think time; samples drawn from a 1000-row, "
-        "seed-42 stratified mix of the Jigsaw scored test split.",
+        "(see `docs/benchmarks.md` for the locked protocol and the "
+        "historical per-stage tables). Each level runs for 60 s with zero "
+        "think time; samples drawn from a 1000-row, seed-42 stratified mix "
+        "of the Jigsaw scored test split. This file reflects the most "
+        "recent run only — diff against `docs/benchmarks.md` for the "
+        "stage-by-stage record.",
         "",
         "| Users | Requests | Failures | p50 (ms) | p95 (ms) | p99 (ms) "
         "| Throughput (req/s) | Error rate |",

@@ -61,14 +61,74 @@ down again, and the dynamic batcher is what lets throughput actually
 grow with concurrency instead of saturating against single-threaded
 PyTorch inference.
 
+### ONNX latency / throughput (Phase 2, Opt 1)
+
+Same locked protocol against the ONNX-backed container (`phase2-onnx`
+tag, `BACKEND=onnx`, CPUExecutionProvider). Identical EC2 host,
+identical 1000-row seed-42 sample, identical sweep levels. Phase 1
+locust CSVs archived under `docs/locust/phase1-baseline/` for direct
+diff if needed.
+
+| Users | Requests | Failures | p50 (ms) | p95 (ms) | p99 (ms) | Throughput (req/s) | Error rate | Notes |
+|------:|---------:|---------:|---------:|---------:|---------:|-------------------:|-----------:|-------|
+|     1 |      320 |        0 |      120 |      510 |      930 |                5.6 |      0.00% | Single-request floor |
+|     5 |      514 |        0 |      370 |    1,500 |    2,500 |                8.8 |      0.00% | Throughput peak |
+|    10 |      470 |        0 |      750 |    3,900 |    7,300 |                8.1 |      0.00% | Saturated |
+|    25 |      499 |        0 |    1,900 |    8,000 |   19,000 |                8.4 |      0.00% | Queue-bound |
+|    50 |      512 |        0 |    4,200 |   12,000 |   23,000 |                8.7 |      0.00% | Queue-bound |
+|   100 |      454 |        0 |   11,000 |   20,000 |   30,000 |                7.7 |      0.00% | Queue-bound |
+
+Compared to the PyTorch baseline (same hardware, same sample, same
+protocol):
+
+| Users | p50 Δ                  | p95 Δ                | p99 Δ                  | Throughput Δ           |
+|------:|-----------------------:|---------------------:|-----------------------:|-----------------------:|
+|     1 | **−25%** (160→120)     | −15% (600→510)       |  +8%  (860→930)        | **+30%** (4.3→5.6)     |
+|     5 | **−27%** (510→370)     | −12% (1,700→1,500)   | **−19%** (3,100→2,500) | **+24%** (7.1→8.8)     |
+|    10 | **−32%** (1,100→750)   | +30% (3,000→3,900)   | +52% (4,800→7,300)     | **+16%** (7.0→8.1)     |
+|    25 | **−42%** (3,300→1,900) |  +8% (7,400→8,000)   | **+90%** (10,000→19,000) | **+33%** (6.3→8.4)   |
+|    50 | **−38%** (6,800→4,200) |  −8% (13,000→12,000) | **+28%** (18,000→23,000) | **+40%** (6.2→8.7)   |
+|   100 | **−27%** (15,000→11,000)| −9% (22,000→20,000) |  +11% (27,000→30,000)   | **+35%** (5.7→7.7)    |
+
+**What changed**: PyTorch eager-mode inference replaced with an
+`onnxruntime.InferenceSession` over the `unitary/toxic-bert` graph
+exported via `optimum`. Tokenization is unchanged; only the matmul
+graph runs through ONNX Runtime's CPU provider instead of PyTorch's.
+
+**What surprised**: the win is split — p50 and throughput got
+meaningfully better across the curve (25-40% on p50, 25-40% on
+throughput), but **p99 got *worse* at mid-to-high concurrency**
+(notably +90% at 25 users, +52% at 10 users). The likely cause: ONNX
+Runtime's CPU provider defaults to `intra_op_num_threads = num_cores`
+(=2 here), so a single request can use both cores in parallel — which
+is what gives the single-request p50 win. But under concurrency, two
+in-flight requests now contend for the same two threads, and the
+scheduling overhead between them shows up in the tail. PyTorch in its
+default config was effectively single-threaded per inference (one
+thread per request), which is slower at p50 but produces a tighter
+distribution under load.
+
+The throughput ceiling moved from ~7 req/s to ~8-9 req/s — still
+saturated against single-process FastAPI / uvicorn 1-worker. This is
+exactly the shape Phase 2 Opt 3 (dynamic batching) is designed to
+address: lift the throughput ceiling by amortizing inference across
+batched requests, which also fixes the p99 tail because batching
+converts queue-time into batch-fill-time. Opt 2 (INT8) should reduce
+per-inference time further, compounding with the ONNX win on p50.
+
+Zero failures across all 6 levels — model output stays consistent and
+the service stays up under stress. **Conclusion**: keep ONNX as the
+new baseline; the p99 regression is a known trade-off that the next
+two opts directly address.
+
 ## Optimization journey
 
 _Populated through Phase 2. Each row gets a one-paragraph "what changed / what surprised" beneath the table._
 
 | Stage | p99 (ms) | Throughput (req/s) | F1 (avg) | Notes |
 |-------|---------:|-------------------:|---------:|-------|
-| Baseline (PyTorch CPU)      | 860 (1u) / 4,800 (10u) | ~7 | 0.6101 (macro) | Single-request floor 860 ms p99; throughput saturates at ~7 req/s |
-| + ONNX Runtime              | _TBD_ | _TBD_ | _TBD_ | — |
+| Baseline (PyTorch CPU)      | 860 (1u) / 4,800 (10u)  | ~7   | 0.6101 (macro) | Single-request floor 860 ms p99; throughput saturates at ~7 req/s |
+| + ONNX Runtime              | 930 (1u) / 7,300 (10u)  | ~8-9 | 0.6101 (macro) | Single-request p50 −25%, throughput +30%; p99 widens at concurrency (intra-op threading) |
 | + INT8 dynamic quantization | _TBD_ | _TBD_ | _TBD_ | — |
 | + Dynamic batching (5 ms)   | _TBD_ | _TBD_ | _TBD_ | — |
 | + Opt 4 (TBD)               | _TBD_ | _TBD_ | _TBD_ | — |
