@@ -33,6 +33,9 @@ packages = ["moderation_engine"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+# Colab notebooks follow per-cell conventions (top-level imports inside the
+# cell that uses them, semicolon-chained config setup); don't lint them.
+extend-exclude = ["colab/"]
 
 [tool.ruff.lint]
 select = [
