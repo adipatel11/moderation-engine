@@ -14,4 +14,6 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
-        args: [--maxkb=1000]
+        # Allow committed benchmark snapshots (e.g. docs/baseline_predictions.parquet)
+        # while still catching accidental dataset / model-weight commits.
+        args: [--maxkb=10000]

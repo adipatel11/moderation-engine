@@ -56,3 +56,5 @@ env/
 locust_results/
 *.html
 !docs/*.html
+docs/_*.log
+docs/locust/
