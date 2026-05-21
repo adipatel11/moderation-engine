@@ -22,6 +22,10 @@ models/
 *.onnx
 *.safetensors
 plan.txt
+# But: ship the optimized ONNX export inside the image so the container
+# can run BACKEND=onnx offline.
+!models/onnx-toxic-bert/
+!models/onnx-toxic-bert/**
 
 # Secrets
 .env
