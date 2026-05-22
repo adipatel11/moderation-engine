@@ -7,7 +7,7 @@ Runtime, INT8-quantized ONNX, …) is selected from settings at startup.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from moderation_engine.config import Settings
@@ -17,6 +17,10 @@ class ToxicityClassifier(Protocol):
     labels: list[str]
     backend_name: str
     model_version: str
+    # Public tokenizer so the batcher can do length-based bucketing without
+    # re-implementing tokenization. Typed as Any to avoid hardcoding the
+    # transformers AutoTokenizer surface in the Protocol.
+    tokenizer: Any
 
     def predict(self, text: str) -> dict[str, float]: ...
     def predict_batch(self, texts: list[str]) -> list[dict[str, float]]: ...

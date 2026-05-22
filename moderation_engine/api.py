@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         classifier,
         window_ms=settings.batching_window_ms,
         max_batch_size=settings.batching_max_batch_size,
+        buckets=settings.batching_bucket_list,
     )
     await batcher.start()
     app.state.classifier = classifier
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         labels=classifier.labels,
         batching_window_ms=settings.batching_window_ms,
         batching_max_batch_size=settings.batching_max_batch_size,
+        batching_buckets=settings.batching_bucket_list,
     )
     yield
     await batcher.stop()
