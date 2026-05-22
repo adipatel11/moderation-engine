@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ._logging import configure_logging
+from .batcher import Batcher
 from .config import settings
 from .model import build_classifier
 
@@ -35,14 +36,24 @@ class HealthResponse(BaseModel):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("model_load_start", backend=settings.backend, model_name=settings.model_name)
     classifier = build_classifier(settings)
+    batcher = Batcher(
+        classifier,
+        window_ms=settings.batching_window_ms,
+        max_batch_size=settings.batching_max_batch_size,
+    )
+    await batcher.start()
     app.state.classifier = classifier
+    app.state.batcher = batcher
     log.info(
         "model_load_done",
         backend=classifier.backend_name,
         model_version=classifier.model_version,
         labels=classifier.labels,
+        batching_window_ms=settings.batching_window_ms,
+        batching_max_batch_size=settings.batching_max_batch_size,
     )
     yield
+    await batcher.stop()
     log.info("shutdown")
 
 
@@ -56,12 +67,12 @@ def health(request: Request) -> HealthResponse:
 
 
 @app.post("/classify", response_model=ClassifyResponse)
-def classify(payload: ClassifyRequest, request: Request) -> ClassifyResponse:
+async def classify(payload: ClassifyRequest, request: Request) -> ClassifyResponse:
     request_id = uuid.uuid4().hex
     bound = log.bind(request_id=request_id, text_length=len(payload.text))
     started = time.perf_counter()
     try:
-        labels = request.app.state.classifier.predict(payload.text)
+        labels = await request.app.state.batcher.predict(payload.text)
     except Exception as exc:
         bound.error("classify_failed", error=str(exc))
         raise HTTPException(status_code=500, detail="classification failed") from exc

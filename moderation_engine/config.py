@@ -14,5 +14,10 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
 
+    # Dynamic batching. window_ms=0 disables it (each request runs solo) so
+    # the same image serves baseline vs batched arms of the sweep.
+    batching_window_ms: float = 5.0
+    batching_max_batch_size: int = 32
+
 
 settings = Settings()

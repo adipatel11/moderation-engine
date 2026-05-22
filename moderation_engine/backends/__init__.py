@@ -19,6 +19,7 @@ class ToxicityClassifier(Protocol):
     model_version: str
 
     def predict(self, text: str) -> dict[str, float]: ...
+    def predict_batch(self, texts: list[str]) -> list[dict[str, float]]: ...
 
 
 def build_classifier(settings: Settings) -> ToxicityClassifier:
