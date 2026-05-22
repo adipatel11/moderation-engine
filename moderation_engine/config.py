@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
 
+    # ONNX Runtime intra-op threading. 0 = ORT default
+    # (`num_logical_cores`). Set 1 to force single-threaded ORT so the
+    # dynamic batcher can run multiple batches truly in parallel through
+    # the executor — the Opt 4 experiment. See `docs/benchmarks.md`
+    # "Dynamic batching" for why this matters on a 2-vCPU host.
+    onnx_intra_op_threads: int = 0
+
     # Dynamic batching. Default 0 (disabled) — on the production target
     # (`c6i.large`, 2 vCPU INT8) the EC2 sweep showed bypass mode wins
     # because ORT already saturates both vCPUs at batch=1 (see
