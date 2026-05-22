@@ -18,9 +18,14 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
 
-    # Dynamic batching. window_ms=0 disables it (each request runs solo) so
-    # the same image serves baseline vs batched arms of the sweep.
-    batching_window_ms: float = 5.0
+    # Dynamic batching. Default 0 (disabled) — on the production target
+    # (`c6i.large`, 2 vCPU INT8) the EC2 sweep showed bypass mode wins
+    # because ORT already saturates both vCPUs at batch=1 (see
+    # `docs/benchmarks.md` "Dynamic batching"). The batcher implementation
+    # is kept in-tree behind this env var so a larger instance with more
+    # vCPUs can flip it on with BATCHING_WINDOW_MS=5 (or any positive int)
+    # and pick up the length-bucketed path.
+    batching_window_ms: float = 0.0
     batching_max_batch_size: int = 32
     # Comma-separated length caps (in tokens). A request whose tokenized
     # length is <= the smallest cap that fits goes into that bucket; each
