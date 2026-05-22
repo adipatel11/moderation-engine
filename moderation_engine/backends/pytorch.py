@@ -17,9 +17,14 @@ class PyTorchToxicityClassifier:
         ]
         self.model_version = f"{model_name}@pytorch"
 
-    @torch.no_grad()
     def predict(self, text: str) -> dict[str, float]:
-        inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+        return self.predict_batch([text])[0]
+
+    @torch.no_grad()
+    def predict_batch(self, texts: list[str]) -> list[dict[str, float]]:
+        inputs = self.tokenizer(
+            texts, return_tensors="pt", padding=True, truncation=True, max_length=512
+        )
         logits = self.model(**inputs).logits
-        probs = torch.sigmoid(logits).squeeze(0).tolist()
-        return dict(zip(self.labels, probs, strict=True))
+        probs = torch.sigmoid(logits).tolist()
+        return [dict(zip(self.labels, row, strict=True)) for row in probs]

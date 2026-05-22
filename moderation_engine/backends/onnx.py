@@ -1,8 +1,13 @@
 """ONNX Runtime backend.
 
-Loads a toxic-bert export produced by `scripts/export_onnx.py` and serves
-predictions through `onnxruntime.InferenceSession` with the CPU execution
-provider — no PyTorch on the hot path.
+Loads a toxic-bert export produced by `scripts/export_onnx.py` (optionally
+INT8-quantized via `scripts/quantize_onnx.py`) and serves predictions through
+`onnxruntime.InferenceSession` with the CPU execution provider — no PyTorch
+on the hot path.
+
+Exposes both `predict(text)` and `predict_batch(texts)`; the batched form is
+the primary path (the dynamic-batcher in `moderation_engine.batcher` calls
+it directly) and the single-item form delegates to it.
 
 Expected layout under `model_dir`:
     model.onnx
@@ -57,8 +62,13 @@ class ONNXToxicityClassifier:
         self.model_version = f"{config.get('_name_or_path', model_name_fallback)}@onnx"
 
     def predict(self, text: str) -> dict[str, float]:
-        enc = self.tokenizer(text, return_tensors="np", truncation=True, max_length=512)
+        return self.predict_batch([text])[0]
+
+    def predict_batch(self, texts: list[str]) -> list[dict[str, float]]:
+        enc = self.tokenizer(
+            texts, return_tensors="np", padding=True, truncation=True, max_length=512
+        )
         feed = {name: enc[name] for name in self._input_names if name in enc}
         logits = self.session.run(None, feed)[0]
-        probs = 1.0 / (1.0 + np.exp(-logits[0]))
-        return dict(zip(self.labels, probs.tolist(), strict=True))
+        probs = 1.0 / (1.0 + np.exp(-logits))
+        return [dict(zip(self.labels, row.tolist(), strict=True)) for row in probs]
