@@ -316,6 +316,95 @@ Opt 3 interview talking point — the curve is what the plan called for
 as the headline plot. The honest result on this hardware is "bypass
 wins," but the journey to that result is the artifact.
 
+### ORT threading tune (Phase 2, Opt 4) — intra_op=1 wins, bucketing still loses
+
+Direct follow-on to the Opt 3 diagnosis. If ORT's intra-op parallelism
+(2 threads per inference on this 2-vCPU host) is what blocks batching
+from adding compute capacity, then setting `intra_op_num_threads = 1`
+should free the second vCPU so a second inference can run in true
+parallel through the executor — which is exactly the per-bucket-worker
+design landed in `moderation_engine/batcher.py` for this opt.
+
+Sweep against the same `c6i.large` host (`phase2-threading` tag,
+`ONNX_INTRA_OP_THREADS` env toggles intra-op, `BATCHING_WINDOW_MS`
+toggles the batcher path). Four configs, 60 s per config at 10-user
+closed-loop concurrency:
+
+| intra_op | window (ms) | Requests | Failures | p50 (ms) | p95 (ms) | p99 (ms) | Throughput (req/s) | vs control |
+|---------:|------------:|---------:|---------:|---------:|---------:|---------:|-------------------:|-----------:|
+| 2 (ORT default) | 0 (bypass) | 1,289 | 0 | 350 | 1,200 | 2,100 | **22.0** | baseline |
+| **1** | **0 (bypass)** | **1,398** | **0** | **330** | **950**  | **2,000** | **23.6** | **+7.4%** |
+| 1 | 2 | 1,049 | 5 (0.5%) | 190 | 1,700 | 2,000 | 17.7 | −19.4% |
+| 1 | 5 | 1,012 | 2 (0.2%) | 280 | 1,600 | 2,000 | 17.1 | −22.2% |
+
+**What changed**: a one-line ORT config knob —
+`SessionOptions.intra_op_num_threads = 1` in `backends/onnx.py`, exposed
+to operators as the `ONNX_INTRA_OP_THREADS` env var. The batcher itself
+was also restructured: Opt 3 had a *single* worker draining all bucket
+queues via `asyncio.wait(FIRST_COMPLETED)`, so two buckets could
+*alternate* but never run concurrently. Opt 4 gives each bucket its
+own `asyncio.Task` worker (`batcher.py:_run_bucket`), so two buckets
+can submit two inferences to the executor in true parallel — the
+behavioural promise this opt's hypothesis depends on. The new
+parallelism contract is enforced by a dedicated test
+(`test_buckets_run_concurrently`) that asserts wall-time for two
+sleep-heavy batches in different buckets stays close to one batch'
+duration, not two.
+
+**What surprised**: the headline win is in the *bypass* row, not the
+batching row. `intra_op=1` alone — with the batcher still disabled —
+adds +7.4% throughput vs the Opt 2 INT8 baseline and tightens p99
+slightly. The mechanism is exactly the Opt 3 diagnosis read in reverse:
+when each inference uses one vCPU, two concurrent inferences run on
+two cores in true parallel; when each inference uses two vCPUs, two
+concurrent inferences thrash the same two cores. At closed-loop
+concurrency = 10 the host is always running two inferences in parallel,
+so the contention cost is paid on every step. The Opt 1 ONNX writeup
+flagged this as the source of the p99 widening at mid concurrency;
+Opt 4 confirms it directly by flipping the knob.
+
+**Why bucketed batching still lost**: combining `intra_op=1` with a
+positive window dropped throughput to ~17 req/s — a 25% regression vs
+either bypass row. The expected behaviour was that two bucket workers
+running in parallel through the executor would roughly double the
+single-thread inference rate; the measured behaviour is that they
+roughly halve it. Two compounding causes, in rough order of magnitude:
+
+1. **Bucket traffic is not balanced.** The Jigsaw seq_len distribution
+   that the buckets were sized against (median 51, p99 = 512) means
+   ~58% of traffic lands in the 64-token bucket and only ~5% in the
+   512-token bucket. Most of the time, only one bucket has work — the
+   second worker idles, parallelism is unused, and the cost paid is the
+   batching overhead (queue dispatch + executor dispatch + double
+   tokenization) without any of the throughput benefit.
+2. **Single-bucket batches lost the intra-op parallelism that bypass
+   had.** With `intra_op=1`, a batch of N items inside *one* bucket
+   takes ~N × single-inference time. With `intra_op=2`, a batch of N
+   took only modestly more than N/2 × single-inference time. The
+   bucketing wins from amortizing tokenizer setup don't recoup the
+   intra-op-parallelism loss when batches are dominated by short
+   sequences (the 64-token bucket, holding 58% of traffic, doesn't
+   benefit from amortization the way the 256/512 buckets would).
+
+So `intra_op=1` is a Pareto win in *bypass* mode but interacts badly
+with the batcher path on heterogeneous traffic with this distribution.
+The two changes have to be evaluated together, not stacked.
+
+The sub-percent error rate (5/1049 at w=2, 2/1012 at w=5) is the same
+small bucketed-path bug observed in the Opt 3 round-2 sweep; bypass
+mode sidesteps it, and the production default keeps doing that.
+
+**Production setting**: `ONNX_INTRA_OP_THREADS=1` is now the default in
+`config.py`, layered on top of the Opt 3 default `BATCHING_WINDOW_MS=0`.
+The full production stack on `c6i.large` is INT8 ONNX + bypass batcher
++ single-threaded intra-op. The batcher implementation and the
+intra-op knob both remain in-tree behind env vars so a multi-vCPU
+deployment can re-enable bucketing and bump intra-op without a rebuild.
+
+**Cumulative win over Phase 1 baseline (1 user)**: p99 860 → ~400 ms
+(−54%), throughput 4.3 → ~12+ req/s at single-user, ceiling lifted
+from ~7 to ~23.6 req/s at 10-user closed loop (**+237%**).
+
 ## Optimization journey
 
 _Populated through Phase 2. Each row gets a one-paragraph "what changed / what surprised" beneath the table._
@@ -326,4 +415,4 @@ _Populated through Phase 2. Each row gets a one-paragraph "what changed / what s
 | + ONNX Runtime              | 930 (1u) / 7,300 (10u)  | ~8-9  | 0.6101 (macro) | Single-request p50 −25%, throughput +30%; p99 widens at concurrency (intra-op threading) |
 | + INT8 dynamic quantization | 430 (1u) / 3,100 (10u)  | ~22-23 | 0.6146 (macro) | p99 −54% at 1u, −58% at 10u; throughput +180%; macro-F1 +0.0045 (5/6 labels improve); container 521→173 MB |
 | + Dynamic batching (bucketed) | 2,200 (10u, w=0) / 1,800 (10u, w=2) | ~20-21 (w=0) / ~13-14 (w=2,5) | 0.6146 | Naive batching: −75% throughput (padding waste). Bucketing fixes padding but doesn't beat bypass — ORT intra-op already saturates 2 vCPUs. Production default `BATCHING_WINDOW_MS=0`; bucketed path retained for multi-vCPU instances |
-| + Opt 4 (TBD)               | _TBD_ | _TBD_ | _TBD_ | — |
+| + ORT threading tune (intra_op=1) | 2,000 (10u, bypass) | **23.6** (10u, bypass) | 0.6146 | One-line `intra_op_num_threads=1` ORT knob; +7.4% throughput vs ORT default by letting two single-threaded inferences run truly in parallel on the 2 vCPUs instead of contending for shared intra-op threads. Batcher path is now per-bucket-workers but bucketing still loses on Jigsaw distribution (58/37/5 traffic split means second worker idles most of the time). Production default `ONNX_INTRA_OP_THREADS=1` |
