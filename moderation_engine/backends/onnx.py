@@ -28,7 +28,12 @@ from transformers import AutoTokenizer
 class ONNXToxicityClassifier:
     backend_name = "onnx"
 
-    def __init__(self, model_dir: Path | str, model_name_fallback: str) -> None:
+    def __init__(
+        self,
+        model_dir: Path | str,
+        model_name_fallback: str,
+        intra_op_num_threads: int = 0,
+    ) -> None:
         model_dir = Path(model_dir)
         if not model_dir.exists():
             raise FileNotFoundError(
@@ -53,6 +58,11 @@ class ONNXToxicityClassifier:
 
         sess_opts = ort.SessionOptions()
         sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        if intra_op_num_threads > 0:
+            # 0 keeps ORT's default (=num_logical_cores). Setting to 1 frees
+            # the second vCPU so multiple batches can run truly in parallel
+            # through the executor — see Opt 4 (`docs/benchmarks.md`).
+            sess_opts.intra_op_num_threads = intra_op_num_threads
         self.session = ort.InferenceSession(
             str(onnx_path),
             sess_options=sess_opts,

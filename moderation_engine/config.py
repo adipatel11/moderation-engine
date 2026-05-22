@@ -18,6 +18,17 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
 
+    # ONNX Runtime intra-op threading. Default 1 — the Opt 4 sweep on the
+    # production target (`c6i.large`, 2 vCPU) measured +7% throughput vs
+    # ORT's default (`num_logical_cores` = 2) under closed-loop concurrency
+    # because two single-threaded inferences run truly in parallel on the
+    # two vCPUs instead of contending for intra-op parallelism within one
+    # inference. Override with 0 (=ORT default) on a beefier instance
+    # where the per-inference latency win from higher intra-op parallelism
+    # outweighs the throughput win. See `docs/benchmarks.md` "ORT
+    # threading tune" for the full sweep.
+    onnx_intra_op_threads: int = 1
+
     # Dynamic batching. Default 0 (disabled) — on the production target
     # (`c6i.large`, 2 vCPU INT8) the EC2 sweep showed bypass mode wins
     # because ORT already saturates both vCPUs at batch=1 (see

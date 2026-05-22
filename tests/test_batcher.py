@@ -184,3 +184,32 @@ def test_bucket_for_routes_lengths_correctly() -> None:
     assert batcher._bucket_for(256) == 256
     assert batcher._bucket_for(257) == 512
     assert batcher._bucket_for(9999) == 512  # clamped to largest bucket
+
+
+def test_buckets_run_concurrently() -> None:
+    """A short-bucket batch and a long-bucket batch should run in parallel
+    through the executor — total wall time stays close to one batch, not
+    two batches. This is the Opt 4 behavioural promise.
+    """
+
+    async def main() -> None:
+        backend = FakeBackend(sleep_s=0.15)
+        batcher = Batcher(backend, window_ms=20, max_batch_size=4, buckets=[32, 512])
+        await batcher.start()
+        try:
+            short = "s" * 10  # bucket 32
+            long_text = "l" * 200  # bucket 512
+            t0 = time.perf_counter()
+            await asyncio.gather(batcher.predict(short), batcher.predict(long_text))
+            wall = time.perf_counter() - t0
+
+            # Two serial batches would take ~0.30 s (2 x sleep). Concurrent
+            # batches should take ~0.15 s + scheduling overhead. Pick a
+            # generous threshold to avoid flakiness on a loaded CI box.
+            assert wall < 0.25, f"buckets didn't parallelize: wall={wall:.3f}s"
+            # And both batches were actually invoked.
+            assert len(backend.batches) == 2
+        finally:
+            await batcher.stop()
+
+    asyncio.run(main())

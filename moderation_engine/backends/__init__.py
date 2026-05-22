@@ -34,5 +34,9 @@ def build_classifier(settings: Settings) -> ToxicityClassifier:
     if settings.backend == "onnx":
         from .onnx import ONNXToxicityClassifier
 
-        return ONNXToxicityClassifier(settings.onnx_model_dir, settings.model_name)
+        return ONNXToxicityClassifier(
+            settings.onnx_model_dir,
+            settings.model_name,
+            intra_op_num_threads=settings.onnx_intra_op_threads,
+        )
     raise ValueError(f"unknown backend: {settings.backend!r}")
