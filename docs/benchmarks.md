@@ -405,6 +405,157 @@ deployment can re-enable bucketing and bump intra-op without a rebuild.
 (−54%), throughput 4.3 → ~12+ req/s at single-user, ceiling lifted
 from ~7 to ~23.6 req/s at 10-user closed loop (**+237%**).
 
+## Long-shot: INT4 (bitsandbytes-style) quantization — the thing that didn't work
+
+Per `plan.txt`: *"Spend half a day deliberately trying something that
+probably won't pan out … document the failure. This section signals
+seniority more than any successful optimization."* The natural
+candidate after Opt 2 (INT8) was 4-bit weight quantization — extend
+the INT8 win further to NF4 (the QLoRA paper's "NormalFloat 4-bit"
+encoding) via ONNX Runtime's `MatMulBnb4Quantizer` (the same Bnb4
+format `bitsandbytes` uses on GPU, but packaged for the ORT graph).
+
+The hypothesis: if INT8 dynamic quantization shrank the model 4× and
+sped it up 3× on CPU thanks to AVX-512 VNNI (`MatMulInteger`), then
+INT4 should shrink it another 2× and either (a) speed it up further,
+(b) leave latency unchanged but ship a smaller container, or in the
+worst case (c) leave latency unchanged but degrade accuracy.
+
+**It came in worse than any of those branches** — a real result that
+took 2 hours to land and made all three predictions wrong. The
+specifics:
+
+### What worked
+
+1. **Quantization runs to completion.** `scripts/quantize_int4.py`
+   loads `models/onnx-toxic-bert/model.onnx` (439 MB fp32), wraps it
+   in `MatMulBnb4Quantizer(quant_type=NF4, block_size=64)`, calls
+   `.process()`, and writes `model.onnx` with 72 of the 96 original
+   `MatMul` ops rewritten to the contrib `com.microsoft::MatMulBnb4`
+   op. The 24 non-quantized `MatMul`s are non-constant-weight matmuls
+   (attention QK^T / AV products and the like) that Bnb4 skips by
+   design — only constant *weight* tensors can be pre-packed into the
+   4-bit format.
+2. **The model loads on CPU.** The plan's "thing that didn't work"
+   would have been clean if the failure was "no kernel for
+   `MatMulBnb4` on `CPUExecutionProvider`" — that's exactly the
+   `MatMulInteger` / CUDA dead end the Opt 2 Colab eval hit (see
+   [`onnx_int8_cpu_only`] in project memory). It would have ended the
+   experiment in 5 minutes. Instead, `onnxruntime` 1.26 *does* ship a
+   CPU kernel for `MatMulBnb4` — `ort.InferenceSession(...)` succeeds
+   and produces sensible logits. The failure has to be found further
+   downstream.
+3. **Accuracy is *better* than INT8 against the FP32 baseline.** Full
+   63,978-row Jigsaw eval via `scripts/eval_baseline.py --backend onnx
+   --onnx-dir models/onnx-toxic-bert-int4-nf4 --out-prefix int4_nf4`:
+
+   | Backend | Macro-F1 | Decisions flipped vs FP32 | Rows with any flip |
+   |---|---|---|---|
+   | INT8 dynamic (Opt 2)  | 0.6146 | 1,939 / 383,868 = **0.505%** | 1,858 / 63,978 = 2.90% |
+   | **INT4-NF4 (Bnb4)**   | **0.6127** | **608 / 383,868 = 0.158%** | **599 / 63,978 = 0.94%** |
+   | FP32 baseline (PyTorch)| 0.6101 | — | — |
+
+   NF4 has roughly *one-third* the flip rate of INT8 against the FP32
+   reference. That's not noise — it's the QLoRA paper's central
+   claim: a 4-bit code learned from the standard normal distribution
+   allocates per-weight resolution proportional to how often values
+   occur in transformer weights (which are roughly normal). INT8's
+   uniform-grid quantization spends resolution on rarely-used
+   extreme magnitudes; NF4 packs codes where the mass is. For this
+   workload, **NF4 is a strictly better quantizer than INT8 dynamic
+   quant** on the accuracy axis. So far this looks like a win.
+
+### What didn't work
+
+4. **The packed model is *larger* on disk than INT8.** `model.onnx`:
+
+   | Backend | model.onnx | % of FP32 | Notes |
+   |---|---|---|---|
+   | FP32        | 438 MB | 100% | full export |
+   | INT8 dynamic| 110 MB |  25% | weights + embeddings + LayerNorm in INT8 |
+   | INT4-NF4    | 146 MB |  33% | **only MatMul weights packed**; embeddings still FP32 |
+
+   Counterintuitively, INT4-NF4 ends up 33% *bigger* than INT8 despite
+   each individual `MatMul` weight tensor being half the size. The
+   reason: `quantize_dynamic(QuantType.QInt8)` quantizes all weight
+   constants in the graph including the 30K × 768 word-embedding table
+   (~92 MB FP32 → ~23 MB INT8). `MatMulBnb4Quantizer` only targets
+   `MatMul` nodes — the `Gather`-fed embedding table stays FP32 in
+   INT4 (92 MB), wiping out the per-MatMul savings. Net effect: INT4
+   wins on the heavy attention/FFN matmuls but loses on the
+   embeddings, and overall ships a bigger file. The op-type counts
+   confirm it — INT8 graph has 74 `MatMulInteger` + 50
+   `DynamicQuantizeLinear` + 101 `Cast`; INT4-NF4 graph has 72
+   `MatMulBnb4` and is otherwise *structurally identical* to FP32
+   (1003 nodes, same op counts everywhere else).
+
+5. **Latency regresses *hard*** on CPU. Micro-bench, M3 Pro,
+   `intra_op_num_threads=1` (production setting from Opt 4), 10
+   timed iterations after 3-iteration warmup:
+
+   | Batch / seq_len            | INT8 (ms) | INT4-NF4 (ms) | Ratio |
+   |---|---:|---:|---:|
+   | bs=1, seq_len=~10 (short)  |     4.2   |      47.7      | **11.4× slower** |
+   | bs=32, seq_len=~10 (short) |   124     |     451        | **3.6× slower**  |
+   | bs=32, seq_len=~150 (long) | 5,861     |  18,221        | **3.1× slower**  |
+
+   And on the full Jigsaw eval (sorted-by-length batches, batch_size
+   32): INT8 ran at 76.5 samples/s (14 min); INT4-NF4 ran at **25.3
+   samples/s (42 min) — 3.0× slower over the same corpus**, which
+   matches the bs=32 micro-bench column independently. The
+   single-request slowdown (11.4×) is the worst case: short
+   sequences mean the dequant cost dominates and there's no
+   amortization across many tokens.
+
+6. **Root cause — no INT4 SIMD anywhere.** The CPU `MatMulBnb4`
+   kernel can't compete with `MatMulInteger` because of an
+   instruction-set asymmetry, not because of code quality. INT8 has
+   AVX-512 VNNI (`vpdpbusd`) on x86 Ice Lake and `SDOT` on M-series
+   ARM — both compute 16- or 32-way INT8 dot products per cycle as
+   hardware ops. There is no equivalent INT4 SIMD on either ISA.
+   So the Bnb4 kernel has to do the work the CPU can't:
+   - unpack two 4-bit weights per byte
+   - look up each code in the NF4 lookup table (16 floats)
+   - multiply by the per-block (block_size=64) FP16 absmax scale
+   - convert to FP32 and feed a regular FP32 matmul
+
+   Every one of those is per-weight overhead that
+   `MatMulInteger`+VNNI sidesteps entirely. The INT4 *storage* win
+   never reaches the math path. This is the same shape of failure as
+   the Opt 2 Colab T4 attempt — both are *hardware-feature
+   mismatches*: the right format meets the wrong silicon, and the
+   format wins only on the silicon it was designed for (CUDA Tensor
+   Cores for Bnb4 / GPU INT8 for `MatMulInteger`).
+
+### What this experiment was worth
+
+The right takeaway is *not* "INT4 is bad." It is:
+
+- **NF4 quantization is the most accurate quantizer we've tried** on
+  this model (1/3 the flip rate of INT8 at half the bit width).
+  Conditional on hardware that can actually exploit it (a GPU with
+  Tensor Cores or a CPU with native INT4 SIMD that doesn't exist
+  today), this would be the production format.
+- **The platform-cost vector of a quantization format is part of the
+  format**, not a downstream concern. INT4 on CPU without INT4 SIMD
+  is *worse* than INT8 on CPU with VNNI, even though INT4 has half
+  the bits and better accuracy. The Opt 2 → Long-shot pair shows the
+  same lesson from both sides: ISA features set the floor, the
+  algorithm sets the ceiling, and you don't get the ceiling without
+  the floor.
+- **Production stays at INT8.** No code change to the runtime; the
+  `MatMulBnb4Quantizer` invocation is kept as a script
+  (`scripts/quantize_int4.py`) so a future rerun on a GPU target or
+  a CPU that ships INT4 SIMD (Sapphire Rapids AMX-INT4 is the
+  candidate ISA) can be measured in minutes. Quantized model is
+  gitignored under `models/onnx-toxic-bert-int4-nf4/`; predictions
+  are in `docs/int4_nf4_predictions.parquet` for any future cross-
+  format accuracy diffs.
+
+This is the deliberate-failure deliverable per `plan.txt`. The
+implementation succeeded; the deployment-target win didn't. That
+gap *is* the signal.
+
 ## Optimization journey
 
 _Populated through Phase 2. Each row gets a one-paragraph "what changed / what surprised" beneath the table._
@@ -416,3 +567,4 @@ _Populated through Phase 2. Each row gets a one-paragraph "what changed / what s
 | + INT8 dynamic quantization | 430 (1u) / 3,100 (10u)  | ~22-23 | 0.6146 (macro) | p99 −54% at 1u, −58% at 10u; throughput +180%; macro-F1 +0.0045 (5/6 labels improve); container 521→173 MB |
 | + Dynamic batching (bucketed) | 2,200 (10u, w=0) / 1,800 (10u, w=2) | ~20-21 (w=0) / ~13-14 (w=2,5) | 0.6146 | Naive batching: −75% throughput (padding waste). Bucketing fixes padding but doesn't beat bypass — ORT intra-op already saturates 2 vCPUs. Production default `BATCHING_WINDOW_MS=0`; bucketed path retained for multi-vCPU instances |
 | + ORT threading tune (intra_op=1) | 2,000 (10u, bypass) | **23.6** (10u, bypass) | 0.6146 | One-line `intra_op_num_threads=1` ORT knob; +7.4% throughput vs ORT default by letting two single-threaded inferences run truly in parallel on the 2 vCPUs instead of contending for shared intra-op threads. Batcher path is now per-bucket-workers but bucketing still loses on Jigsaw distribution (58/37/5 traffic split means second worker idles most of the time). Production default `ONNX_INTRA_OP_THREADS=1` |
+| Long-shot — INT4 NF4 (Bnb4) ❌ | _bs=1: 47.7 ms_ (vs 4.2 ms INT8 — 11× slower) | _25.3 samples/s_ on full eval (3× slower than INT8) | **0.6127** (flip rate vs FP32 0.158% — best of any backend) | The deliberate failure deliverable: 4-bit NF4 weight quantization via ORT's `MatMulBnb4Quantizer` runs and produces the most accurate predictions yet, but no INT4 SIMD on x86 VNNI or ARM SDOT means the kernel falls back to dequant-then-FP32-matmul — 3-11× slower than INT8 on CPU. Also 33% *larger* than INT8 on disk because Bnb4 only packs `MatMul` weights, not embeddings. Production stays at INT8 |
