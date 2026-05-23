@@ -22,3 +22,4 @@ The project is structured as four phases:
 4. **Production polish + writeup** — observability, CI, bias evaluation, blog post
 
 Benchmark log: [`docs/benchmarks.md`](docs/benchmarks.md).
+Bias evaluation: [`docs/bias_evaluation.md`](docs/bias_evaluation.md).
