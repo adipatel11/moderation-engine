@@ -1,5 +1,6 @@
 # --- Project-private ---
 plan.txt
+blog/
 data/
 models/
 *.onnx
