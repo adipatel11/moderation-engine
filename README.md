@@ -234,9 +234,9 @@ another. Jigsaw competition power-mean bias score: **0.8705** (overall AUC
 - **No adversarial-robustness audit yet** — misspellings, leetspeak,
   zero-width unicode, polite-sounding threats. Plan §3 calls for a half-day
   probing exercise — not yet done.
-- **No Prometheus instrumentation yet** — `/metrics` endpoint is on the
-  Phase 3 polish list. The service currently emits structured JSON logs only
-  (via `structlog`).
+- **No Prometheus instrumentation** — out of scope for this project. The
+  service emits structured JSON logs only (via `structlog`); aggregation
+  would be a downstream concern if this were deployed for real.
 - **Single-instance deployment** — no autoscaling, no load balancer. The
   $25/mo box ceiling is ~23.6 req/s at p99 = 2 s. Beyond that you scale
   horizontally; the container is stateless.
@@ -250,7 +250,6 @@ another. Jigsaw competition power-mean bias score: **0.8705** (overall AUC
 
 - Adversarial probing → populate a "Known Failure Modes" section with
   concrete examples that fool the model.
-- Prometheus metrics on `/metrics` + a Grafana dashboard for the README hero.
 - Per-subgroup threshold tuning as a bias-mitigation experiment (with proper
   hold-out evaluation, since it can easily make things worse).
 - Try the Bnb4 long-shot again on Sapphire Rapids (AMX-INT4) or a GPU target —
