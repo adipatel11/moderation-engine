@@ -322,5 +322,5 @@ MIT. See [`LICENSE`](LICENSE).
 
 ## Author
 
-Adit Patel — CS student building production-grade ML infrastructure projects.
-`aditdpatelai@gmail.com` · [GitHub](https://github.com/adipatel11)
+Adit Patel | AI student building production-grade ML infrastructure projects.
+`aditdpatel05@gmail.com` · [GitHub](https://github.com/adipatel11)
