@@ -556,6 +556,25 @@ This is the deliberate-failure deliverable per `plan.txt`. The
 implementation succeeded; the deployment-target win didn't. That
 gap *is* the signal.
 
+## Bias evaluation (Phase 3)
+
+Production INT8 model evaluated for unintended demographic bias on the
+Jigsaw "Unintended Bias in Toxicity Classification" test set (42,870
+identity-annotated rows). Full methodology, per-subgroup tables, and
+honest interpretation are in [`bias_evaluation.md`](bias_evaluation.md).
+Headline:
+
+- **Overall FPR: 1.39%** on non-toxic comments at threshold 0.5
+- **Worst-affected subgroup: LGB mentions, 3.61% FPR (2.6× the overall rate)**
+- Next worst: mental-illness mentions (3.21%); next best: Christian mentions (0.81%)
+- Jigsaw competition bias score (power-mean aggregate): **0.8705** (overall AUC 0.9019)
+
+The disparity pattern matches what Borkan et al. 2019 reported across
+toxicity classifiers — over-flagging of identity mentions, with the
+largest gaps on identities frequently discussed in adversarial contexts
+online. Per `plan.txt`, the evaluation measures and documents the bias
+without attempting to fix it.
+
 ## Optimization journey
 
 _Populated through Phase 2. Each row gets a one-paragraph "what changed / what surprised" beneath the table._
